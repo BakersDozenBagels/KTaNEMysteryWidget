@@ -233,8 +233,8 @@ public class WidgetMagic : MonoBehaviour {
         }
         else if(current != null && (pressedOn == (int)Math.Floor(Info.GetTime()) + 1 || pressedOn == (int)Math.Floor(Info.GetTime()) - 1))
         {
-            Debug.LogFormat("[Mystery Widget #{0}] Failswitch! Striking.", id);
-            ActiveModule.HandleStrike();
+            Debug.LogFormat("[Mystery Widget #{0}] Failswitch! Taking off time.", id);
+            TimeRemaining.FromModule(ActiveModule, Info.GetTime() * 0.8f);
             Displayed = false;
             valid.Remove(current);
         }
@@ -336,4 +336,8 @@ public class WidgetMagic : MonoBehaviour {
         }
         DisplayMesh.text = "Congrats!";
     }
+
+    //TP handling
+
+
 }
