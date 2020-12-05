@@ -92,6 +92,7 @@ public class WidgetMagic : MonoBehaviour {
             l.AddRange(new string[] { "Mystery Widget", "Cookie Jars", "Divided Squares", "Encrypted Hangman", "Encryption Bingo", "Four-Card Monte", "Hogwarts", "The Heart", "The Swan", "Button Messer", "Random Access Memory", "Turn The Keys", "Tech Support", "Forget Perspective", "Security Council", "Bamboozling Time Keeper", "OmegaDestroyer", "The Very Annoying Button", "Forget Me Not", "Turn The Key", "Forget It Not", "42", "A>N<D", "Shoddy Chess", "The Time Keeper", "Brainf---", "501", "Forget Me Later", "Ultimate Custom Night", "Forget Any Color", "The Twin", "Timing is Everything", "Forget Them All", "Forget Us Not", "Password Destroyer", "Simon Forgets", "Forget Maze Not", "Forget Everything", "OmegaForget", "Übermodule", "Purgatory", "Forget Enigma", "Forget This", "RPS Judging", "Keypad Directionality", "Souvenir", "Forget Infinity", "Multitask", "Iconic", "Tallordered Keys", "14", "Simon's Stages", "The Troll", "Forget The Colors", "Organization", "Floor Lights", "Whiteout", "Don't Touch Anything", "Kugelblitz", "Busy Beaver", "Encrypted Hangman", "Turn The Keys", "Button Messer", "Cookie Jars", "Encryption Bingo", "Tech Support", "Random Access Memory", "Hogwarts", "Four-Card Monte", "Divided Squares", "The Swan", "Black Arrows", "Zener Cards", "Simp Me Not" });
             _info.IgnoredAlways = l.ToArray();
             _info.toBeGenerated = false;
+            foreach(Component c in transform.GetComponentsInChildren<Component>()) { Debug.Log(c.name); }
         }
         foreach (Component n in _info.edgework)
         {
@@ -104,7 +105,6 @@ public class WidgetMagic : MonoBehaviour {
             else if (rx2.IsMatch(n.name)) { preferredEdgework.Add("Port"); }
             else if (rx3.IsMatch(n.name)) { preferredEdgework.Add("Indicator"); }
             else { preferredEdgework.Add("Modded Widget"); }
-            preferredEdgework.Add(n.name);
         }
         if (_info.edgework.Count == 0)
         {
@@ -138,6 +138,7 @@ public class WidgetMagic : MonoBehaviour {
                 else if (rx2.IsMatch(Selected.gameObject.name)) { hiddenType = "Port"; }
                 else if (rx3.IsMatch(Selected.gameObject.name)) { hiddenType = "Indicator"; }
                 else { hiddenType = "Modded Widget"; }
+                Debug.LogFormat("[Mystery Widget #{0}] Specifically, a {1}.", id, hiddenType);
             }
             _info.edgework.Remove(Selected);
             Button.OnInteract += delegate () { HandlePressDown(); return false; };
@@ -201,6 +202,11 @@ public class WidgetMagic : MonoBehaviour {
                     }
                 }
             }
+        }
+        else if(valid.Count == 0)
+        {
+            isAutoSolved = true;
+            Debug.LogFormat("[Mystery Widget #{0}] No stages generated, autosolving instead.", id);
         }
         else
         {
