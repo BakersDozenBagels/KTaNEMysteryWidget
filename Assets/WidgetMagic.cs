@@ -94,17 +94,21 @@ public class WidgetMagic : MonoBehaviour {
             _info.IgnoredAlways = l.ToArray();
             _info.toBeGenerated = false;
         }
+        preferredEdgework.Add("Serial Number");
+        preferredEdgework.Add("Battery");
+        preferredEdgework.Add("Port");
+        preferredEdgework.Add("Indicator");
         foreach (Component n in _info.allEdgework)
         {
             Regex rx = new Regex("serial", RegexOptions.IgnoreCase);
             Regex rx1 = new Regex(@"battery", RegexOptions.IgnoreCase);
             Regex rx2 = new Regex(@"port", RegexOptions.IgnoreCase);
             Regex rx3 = new Regex(@"indicator", RegexOptions.IgnoreCase);
-            if (rx.IsMatch(n.name)) { preferredEdgework.Add("Serial Number"); }
-            else if (rx2.IsMatch(n.name)) { preferredEdgework.Add("Battery"); }
-            else if (rx2.IsMatch(n.name)) { preferredEdgework.Add("Port"); }
-            else if (rx3.IsMatch(n.name)) { preferredEdgework.Add("Indicator"); }
-            else { preferredEdgework.Add("Modded Widget"); }
+            if (!rx.IsMatch(n.name) && !rx1.IsMatch(n.name) && !rx2.IsMatch(n.name) && !rx3.IsMatch(n.name))
+            {
+            preferredEdgework.Add("Modded Widget");
+                break;
+            }
         }
         if (_info.edgework.Count == 0)
         {
