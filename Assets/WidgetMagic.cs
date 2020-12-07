@@ -44,7 +44,7 @@ public class WidgetMagic : MonoBehaviour {
         public string[] IgnoredAlways;
         public bool SNCovered = false, OtherCovered = false;
         public bool SNSelf = false, OtherSelf = false;
-        public List<Component> edgework;
+        public List<Component> edgework, allEdgework;
         public bool toBeGenerated = true;
         public int idNext = 1;
     }
@@ -86,15 +86,15 @@ public class WidgetMagic : MonoBehaviour {
             Regex rx = new Regex(@"SerialNumber\(Clone\)|BatteryWidget\(Clone\)|IndicatorWidget\(Clone\)|PortWidget\(Clone\)", RegexOptions.IgnoreCase);
             Regex seed = new Regex(@"seed", RegexOptions.IgnoreCase);
             _info.edgework = possibleEdgework.Where(x => (rx.IsMatch(x.name) || x.GetType().Name == "KMWidget") && !seed.IsMatch(x.name)).ToList();
+            _info.allEdgework = _info.edgework;
             GenerateIgnored();
             _info.IgnoredAlways = GetIgnored();
             var l = _info.IgnoredAlways.ToList();
             l.AddRange(new string[] { "Mystery Widget", "Cookie Jars", "Divided Squares", "Encrypted Hangman", "Encryption Bingo", "Four-Card Monte", "Hogwarts", "The Heart", "The Swan", "Button Messer", "Random Access Memory", "Turn The Keys", "Tech Support", "Forget Perspective", "Security Council", "Bamboozling Time Keeper", "OmegaDestroyer", "The Very Annoying Button", "Forget Me Not", "Turn The Key", "Forget It Not", "42", "A>N<D", "Shoddy Chess", "The Time Keeper", "Brainf---", "501", "Forget Me Later", "Ultimate Custom Night", "Forget Any Color", "The Twin", "Timing is Everything", "Forget Them All", "Forget Us Not", "Password Destroyer", "Simon Forgets", "Forget Maze Not", "Forget Everything", "OmegaForget", "Übermodule", "Purgatory", "Forget Enigma", "Forget This", "RPS Judging", "Keypad Directionality", "Souvenir", "Forget Infinity", "Multitask", "Iconic", "Tallordered Keys", "14", "Simon's Stages", "The Troll", "Forget The Colors", "Organization", "Floor Lights", "Whiteout", "Don't Touch Anything", "Kugelblitz", "Busy Beaver", "Encrypted Hangman", "Turn The Keys", "Button Messer", "Cookie Jars", "Encryption Bingo", "Tech Support", "Random Access Memory", "Hogwarts", "Four-Card Monte", "Divided Squares", "The Swan", "Black Arrows", "Zener Cards", "Simp Me Not" });
             _info.IgnoredAlways = l.ToArray();
             _info.toBeGenerated = false;
-            foreach(Component c in transform.GetComponentsInChildren<Component>()) { Debug.Log(c.name); }
         }
-        foreach (Component n in _info.edgework)
+        foreach (Component n in _info.allEdgework)
         {
             Regex rx = new Regex("serial", RegexOptions.IgnoreCase);
             Regex rx1 = new Regex(@"battery", RegexOptions.IgnoreCase);
@@ -125,7 +125,13 @@ public class WidgetMagic : MonoBehaviour {
             IDMesh.text = _info.idNext.ToString();
             id = _info.idNext;
             _info.idNext++;
-            if (rx.IsMatch(Selected.gameObject.name)) { _info.SNCovered = true; _info.SNSelf = true; Debug.LogFormat("[Mystery Widget #{0}] Covered the serial number.", id); hiddenType = "Serial Number"; }
+            if (rx.IsMatch(Selected.gameObject.name))
+            {
+                _info.SNCovered = true;
+                _info.SNSelf = true;
+                Debug.LogFormat("[Mystery Widget #{0}] Covered the serial number.", id);
+                hiddenType = "Serial Number";
+            }
             else
             {
                 _info.OtherCovered = true;
@@ -134,10 +140,22 @@ public class WidgetMagic : MonoBehaviour {
                 Regex rx1 = new Regex(@"battery", RegexOptions.IgnoreCase);
                 Regex rx2 = new Regex(@"port", RegexOptions.IgnoreCase);
                 Regex rx3 = new Regex(@"indicator", RegexOptions.IgnoreCase);
-                if (rx1.IsMatch(Selected.gameObject.name)) { hiddenType = "Battery"; }
-                else if (rx2.IsMatch(Selected.gameObject.name)) { hiddenType = "Port"; }
-                else if (rx3.IsMatch(Selected.gameObject.name)) { hiddenType = "Indicator"; }
-                else { hiddenType = "Modded Widget"; }
+                if (rx1.IsMatch(Selected.gameObject.name))
+                {
+                    hiddenType = "Battery";
+                }
+                else if (rx2.IsMatch(Selected.gameObject.name))
+                {
+                    hiddenType = "Port";
+                }
+                else if (rx3.IsMatch(Selected.gameObject.name))
+                {
+                    hiddenType = "Indicator";
+                }
+                else
+                {
+                    hiddenType = "Modded Widget";
+                }
                 Debug.LogFormat("[Mystery Widget #{0}] Specifically, a {1}.", id, hiddenType);
             }
             _info.edgework.Remove(Selected);
@@ -344,6 +362,41 @@ public class WidgetMagic : MonoBehaviour {
     }
 
     //TP handling
+    void TwitchHandleForcedSolve()
+    {
+        if (isSolved) return;
+        isSolved = true;
+        DisplayMesh.text = "Congrats!";
+        ActiveModule.HandlePass();
+        Ready = false;
+        StartCoroutine(UnCover());
+        Displayed = true;
+        valid = new List<string>();
+        current = null;
+        Reset();
+    }
+    bool TwitchShouldCancelCommand;
+    string TwitchHelpMessage = "Use \"!{0} hold 3\" to hold across three timer ticks.";
+    IEnumerator ProcessTwitchCommand(string command)
+    {
+        command = command.ToLowerInvariant().Trim();
+        Regex rx = new Regex(@"^hold\s+\d+$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        if (!rx.IsMatch(command)) yield break;
+        Regex rxd = new Regex(@"\d+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        int userInput = int.Parse(rxd.Match(command).Value);
 
-
+        Button.OnInteract();
+        var time = (int)Info.GetTime();
+        while (time - userInput != (int)Info.GetTime() && time + userInput != (int)Info.GetTime())
+        {
+            if (TwitchShouldCancelCommand)
+            {
+                Button.OnInteractEnded();
+                yield return "cancelled";
+            }
+            yield return new WaitForSeconds(0.1f);
+        }
+        Button.OnInteractEnded();
+        yield return null;
+    }
 }
