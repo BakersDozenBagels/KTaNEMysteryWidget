@@ -1,50 +1,41 @@
-﻿using System.Collections;
+﻿using System;
+using System.Collections;
 using System.Collections.Generic;
-using UnityEngine;
-using System;
 using System.Linq;
 using System.Text.RegularExpressions;
-using System.Reflection;
+using KModkit;
+using UnityEngine;
+using RNG = UnityEngine.Random;
 
-public class WidgetMagic : MonoBehaviour {
+public class WidgetMagic : MonoBehaviour
+{
     public KMBombModule ActiveModule;
     public GameObject CoverPrefab;
-    public TextMesh IDMesh, DisplayMesh;
-    public KMBossModule BossManager;
+    public TextMesh IDMesh;
     public KMSelectable Button;
     public KMAudio Audio;
     public KMBombInfo Info;
-    public KMRuleSeedable RuleSeed;
-
-    private float scaler = 0.75f; 
+    public Renderer[] SpriteSlots;
+    public Texture[] Sprites;
 
     private GameObject Cover;
 
-    private int id;
-
-    private bool Displayed = false, Ready = false;
-
-    private List<string> valid = new List<string>(), solvedModules = new List<string>();
-    private string current;
+    private int id = ++_idc, coverId;
+    private static int _idc;
 
     private bool _awake = false;
 
-    private int pressedOn;
+    private bool _isSolved = false;
 
-    //Souv variables
-    private string keyModule = null;
-    private string hiddenType = null;
-    private bool isSolved = false;
-    private bool isAutoSolved = false;
-    private List<String> preferredEdgework = new List<string>();
+    private List<Func<float, float, bool>> _expectedActions;
+    private List<int> _slotOrder;
+    private List<int> _symbols;
+
+    private float _lastHold = -1;
 
     sealed class BombInfo
     {
-        public List<String> IgnoredSN = new List<string>(), IgnoredOther = new List<string>(), KnownModules = new List<string>();
-        public string[] IgnoredAlways;
-        public bool SNCovered = false, OtherCovered = false;
-        public bool SNSelf = false, OtherSelf = false;
-        public List<Component> edgework, allEdgework;
+        public List<Component> edgework;
         public bool toBeGenerated = true;
         public int idNext = 1;
     }
@@ -52,73 +43,91 @@ public class WidgetMagic : MonoBehaviour {
     private static readonly Dictionary<string, BombInfo> _infos = new Dictionary<string, BombInfo>();
     private BombInfo _info;
 
-    private void Reset()
-    {
-        scaler = 0.75f;
-        _info.IgnoredSN = new List<string>(); _info.IgnoredOther = new List<string>(); _info.KnownModules = new List<string>();
-        _info.SNCovered = false; _info.OtherCovered = false;
-        _info.SNSelf = false; _info.OtherSelf = false;
-        _info.toBeGenerated = true;
-        Displayed = false; Ready = false;
-        valid = new List<string>(); solvedModules = new List<string>();
-        _awake = false;
-    }
-
     // Use this for initialization
-    void Start () {
-        if (_infos.ContainsKey(Info.GetSerialNumber())) { _info = _infos[Info.GetSerialNumber()]; }
+    void Start()
+    {
+        if(_infos.ContainsKey(Info.GetSerialNumber())) { _info = _infos[Info.GetSerialNumber()]; }
         else
         {
             _infos.Add(Info.GetSerialNumber(), new BombInfo());
             _info = _infos[Info.GetSerialNumber()];
         }
-        StartCoroutine(MakeCover());
-        Info.OnBombExploded += delegate () { Reset(); };
-        Info.OnBombSolved += delegate () { if (Info.GetSolvedModuleNames().Count == Info.GetSolvableModuleNames().Count) { Reset(); } };
-	}
+        ActiveModule.OnActivate += () => Activate();
 
-    private IEnumerator MakeCover()
+        Button.OnInteract += Press;
+        Button.OnInteractEnded += Release;
+    }
+
+    private void Release()
     {
-        yield return null;
-        if (_info.toBeGenerated)
+        Audio.PlayGameSoundAtTransform(KMSoundOverride.SoundEffect.BigButtonRelease, Button.transform);
+        if(!_awake || _lastHold < 0 || _isSolved || _expectedActions.Count == 0)
+            return;
+
+        if(_expectedActions[0](_lastHold, Info.GetTime()))
+        {
+            StartCoroutine(Fade(SpriteSlots[_slotOrder[0]], _expectedActions.Count == 1));
+
+            _expectedActions = _expectedActions.Skip(1).ToList();
+            _slotOrder = _slotOrder.Skip(1).ToList();
+
+            Debug.LogFormat("[Mystery Widget #{0}] That input was correct (Held at {1}, released at {2}). {3} Remain.", id, _lastHold, Info.GetTime(), _expectedActions.Count);
+        }
+        else
+        {
+            Debug.LogFormat("[Mystery Widget #{0}] Bad input (Held at {1}, released at {2}). Strike!", id, _lastHold, Info.GetTime());
+            ActiveModule.HandleStrike();
+        }
+
+        _lastHold = -1;
+    }
+
+    private IEnumerator Fade(Renderer renderer, bool solve)
+    {
+        float time = Time.time;
+        while(Time.time - time < 2f)
+        {
+            yield return null;
+            renderer.material.color = Color.Lerp(Color.white, new Color(1f, 1f, 1f, 0f), (Time.time - time) / 2);
+        }
+        renderer.enabled = false;
+
+        if(solve)
+        {
+            Debug.LogFormat("[Mystery Widget #{0}] Module solved, uncovering hidden widget.", id);
+            StartCoroutine(UnCover());
+            _isSolved = true;
+            ActiveModule.HandlePass();
+        }
+    }
+
+    private bool Press()
+    {
+        Audio.PlayGameSoundAtTransform(KMSoundOverride.SoundEffect.BigButtonPress, Button.transform);
+        if(!_awake || _isSolved)
+            return false;
+
+        _lastHold = Info.GetTime();
+
+        return false;
+    }
+
+    private void Activate()
+    {
+        if(_info.toBeGenerated)
         {
             List<Component> possibleEdgework = ActiveModule.transform.root.GetComponentsInChildren<Component>().Where(x => x.GetType().Name == "Transform" || x.GetType().Name == "KMWidget").ToList();
             Regex rx = new Regex(@"SerialNumber\(Clone\)|BatteryWidget\(Clone\)|IndicatorWidget\(Clone\)|PortWidget\(Clone\)", RegexOptions.IgnoreCase);
             Regex seed = new Regex(@"seed", RegexOptions.IgnoreCase);
             _info.edgework = possibleEdgework.Where(x => (rx.IsMatch(x.name) || x.GetType().Name == "KMWidget") && !seed.IsMatch(x.name)).ToList();
-            _info.allEdgework = _info.edgework;
-            GenerateIgnored();
-            _info.IgnoredAlways = GetIgnored();
-            var l = _info.IgnoredAlways.ToList();
-            l.AddRange(new string[] { "Mystery Widget", "Cookie Jars", "Divided Squares", "Encrypted Hangman", "Encryption Bingo", "Four-Card Monte", "Hogwarts", "The Heart", "The Swan", "Button Messer", "Random Access Memory", "Turn The Keys", "Tech Support", "Forget Perspective", "Security Council", "Bamboozling Time Keeper", "OmegaDestroyer", "The Very Annoying Button", "Forget Me Not", "Turn The Key", "Forget It Not", "42", "A>N<D", "Shoddy Chess", "The Time Keeper", "Brainf---", "501", "Forget Me Later", "Ultimate Custom Night", "Forget Any Color", "The Twin", "Timing is Everything", "Forget Them All", "Forget Us Not", "Password Destroyer", "Simon Forgets", "Forget Maze Not", "Forget Everything", "OmegaForget", "Übermodule", "Purgatory", "Forget Enigma", "Forget This", "RPS Judging", "Keypad Directionality", "Souvenir", "Forget Infinity", "Multitask", "Iconic", "Tallordered Keys", "14", "Simon's Stages", "The Troll", "Forget The Colors", "Organization", "Floor Lights", "Whiteout", "Don't Touch Anything", "Kugelblitz", "Busy Beaver", "Encrypted Hangman", "Turn The Keys", "Button Messer", "Cookie Jars", "Encryption Bingo", "Tech Support", "Random Access Memory", "Hogwarts", "Four-Card Monte", "Divided Squares", "The Swan", "Black Arrows", "Zener Cards", "Simp Me Not" });
-            _info.IgnoredAlways = l.ToArray();
             _info.toBeGenerated = false;
         }
-        preferredEdgework.Add("Serial Number");
-        preferredEdgework.Add("Battery");
-        preferredEdgework.Add("Port");
-        preferredEdgework.Add("Indicator");
-        foreach (Component n in _info.allEdgework)
-        {
-            Regex rx = new Regex("serial", RegexOptions.IgnoreCase);
-            Regex rx1 = new Regex(@"battery", RegexOptions.IgnoreCase);
-            Regex rx2 = new Regex(@"port", RegexOptions.IgnoreCase);
-            Regex rx3 = new Regex(@"indicator", RegexOptions.IgnoreCase);
-            if (!rx.IsMatch(n.name) && !rx1.IsMatch(n.name) && !rx2.IsMatch(n.name) && !rx3.IsMatch(n.name))
-            {
-            preferredEdgework.Add("Modded Widget");
-                break;
-            }
-        }
-        if (_info.edgework.Count == 0)
+        if(_info.edgework.Count == 0)
         {
             Cover = Instantiate(CoverPrefab);
             Cover.SetActive(false);
             IDMesh.text = "ERR";
-            DisplayMesh.text = "Press to solve.";
-            Debug.LogFormat("[Mystery Widget #{0}] Not enough widgets to cover! Press to solve.", id);
-            isAutoSolved = true;
-            Button.OnInteract += delegate () { isSolved = true; ActiveModule.HandlePass(); Debug.LogFormat("[Mystery Widget #{0}] Solved by too few widgets.", id); return false; };
+            Debug.LogFormat("[Mystery Widget #{0}] Not enough widgets to cover! Covering nothing.", id);
         }
         else
         {
@@ -127,225 +136,65 @@ public class WidgetMagic : MonoBehaviour {
             Regex rx = new Regex("serial", RegexOptions.IgnoreCase);
             Cover.GetComponentInChildren<TextMesh>().text = _info.idNext.ToString();
             IDMesh.text = _info.idNext.ToString();
-            id = _info.idNext;
+            coverId = _info.idNext;
             _info.idNext++;
-            if (rx.IsMatch(Selected.gameObject.name))
-            {
-                _info.SNCovered = true;
-                _info.SNSelf = true;
-                Debug.LogFormat("[Mystery Widget #{0}] Covered the serial number.", id);
-                hiddenType = "Serial Number";
-            }
-            else
-            {
-                _info.OtherCovered = true;
-                _info.OtherSelf = true;
-                Debug.LogFormat("[Mystery Widget #{0}] Covered a port, battery, indicator, or modded widget.", id);
-                Regex rx1 = new Regex(@"battery", RegexOptions.IgnoreCase);
-                Regex rx2 = new Regex(@"port", RegexOptions.IgnoreCase);
-                Regex rx3 = new Regex(@"indicator", RegexOptions.IgnoreCase);
-                if (rx1.IsMatch(Selected.gameObject.name))
-                {
-                    hiddenType = "Battery";
-                }
-                else if (rx2.IsMatch(Selected.gameObject.name))
-                {
-                    hiddenType = "Port";
-                }
-                else if (rx3.IsMatch(Selected.gameObject.name))
-                {
-                    hiddenType = "Indicator";
-                }
-                else
-                {
-                    hiddenType = "Modded Widget";
-                }
-                Debug.LogFormat("[Mystery Widget #{0}] Specifically, a {1}.", id, hiddenType);
-            }
+            Debug.LogFormat("[Mystery Widget #{0}] Covered an object called {1}.", id, Selected.name);
             _info.edgework.Remove(Selected);
-            Button.OnInteract += delegate () { HandlePressDown(); return false; };
-            Button.OnInteractEnded += delegate () { HandlePressUp(); };
         }
         Button.OnInteract += delegate () { Button.AddInteractionPunch(0.1f); Audio.PlayGameSoundAtTransform(KMSoundOverride.SoundEffect.BigButtonPress, transform); return false; };
         Button.OnInteractEnded += delegate () { Audio.PlayGameSoundAtTransform(KMSoundOverride.SoundEffect.BigButtonRelease, transform); };
-        valid = Info.GetSolvableModuleNames().Where(x => !_info.IgnoredAlways.Contains(x) && _info.KnownModules.Contains(x)).ToList();
-        if (_info.SNCovered) { valid = valid.Where(x => !_info.IgnoredSN.Contains(x)).ToList(); }
-        if (_info.OtherCovered && !_info.SNSelf) { valid = valid.Where(x => !_info.IgnoredOther.Contains(x)).ToList(); }
-        valid = valid.Shuffle().Take((int)Math.Floor(valid.Count * scaler)).ToList();
-        if (Info.GetSolvableModuleNames().Contains("Button Messer") || Info.GetSolvableModuleNames().Contains("Organization") || Info.GetSolvableModuleNames().Contains("Turn The Keys"))
-        {
-            valid = new List<string>();
-            isAutoSolved = true;
-            Debug.LogFormat("[Mystery Widget #{0}] There is a bad module, meaning this must auto-solve.", id);
-        }
-        else if (!RuleSeed.GetRNG().Seed.Equals(1))
-        {
-            valid = new List<string>();
-            isAutoSolved = true;
-            Debug.LogFormat("[Mystery Widget #{0}] Rule seed is not 1, meaning this must auto-solve.", id);
-        }
-        else if (Info.GetSolvableModuleNames().Contains("Mystery Module"))
-        {
-            foreach(KMBombModule l in FindObjectsOfType<KMBombModule>())
-            {
-                foreach(Component c in l.GetComponents<Component>())
-                {
-                    if (c.GetType().Name.Equals("MysteryModuleScript"))
-                    {
-                        BindingFlags f = BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public;
-                        try
-                        {
-                            Debug.LogFormat("[Mystery Widget #{0}] Attempting to retrieve mystery module's mystified module...", id);
-                            c.GetType().GetField("mystifiedModule", f).GetValue(c);
-                        }
-                        catch
-                        {
-                            valid = new List<string>();
-                            isAutoSolved = true;
-                            Debug.LogFormat("[Mystery Widget #{0}] Error finding module mystified by mystery module, auto-solving instead.", id);
-                            goto error;
-                        }
-                        if (c.GetType().GetField("mystifiedModule", f).GetValue(c) == null)
-                        {
-                            yield return new WaitUntil(() => c.GetType().GetField("mystifiedModule", f).GetValue(c) != null);
-                        }
-                        try
-                        {
-                            valid.Remove(c.GetType().GetField("mystifiedModule", f).GetValue(c).GetType().GetField("ModuleDisplayName", f).GetValue(c.GetType().GetField("mystifiedModule", f).GetValue(c)).ToString());
-                            Debug.LogFormat("[Mystery Widget #{0}] Your chosen stages are: {1}.", id, valid.Join(", "));
-                        }
-                        catch
-                        {
-                            valid = new List<string>();
-                            isAutoSolved = true;
-                            Debug.LogFormat("[Mystery Widget #{0}] Error finding module mystified by mystery module, auto-solving instead.", id);
-                            goto error;
-                        }
-                    }
-                }
-            }
-        }
-        else if(valid.Count == 0)
-        {
-            isAutoSolved = true;
-            Debug.LogFormat("[Mystery Widget #{0}] No stages generated, autosolving instead.", id);
-        }
-        else
-        {
-            Debug.LogFormat("[Mystery Widget #{0}] Your chosen stages are: {1}.", id, valid.Join(", "));
-        }
-    error:
-        if (isAutoSolved)
-        {
-            Cover.transform.localScale = new Vector3(0f, 0f, 0f);
-        }
+
+        GeneratePuzzle();
+
         _awake = true;
     }
 
-    private void HandlePressDown()
+    private void GeneratePuzzle()
     {
-        pressedOn = (int)Math.Floor(Info.GetTime());
-        Debug.LogFormat("[Mystery Widget #{0}] Pressed at {1}.", id, pressedOn, pressedOn - 3);
+        _symbols = Enumerable.Repeat(0, 7).Select(x => RNG.Range(0, 12)).ToList();
+
+        for(int i = 0; i < 7; i++)
+            SpriteSlots[i].material.mainTexture = Sprites[_symbols[i]];
+
+        Debug.LogFormat("[Mystery Widget #{0}] The displayed sprites are: {1}", id, _symbols.Select(i => i + 1).Join(", "));
+
+        _slotOrder = Enumerable.Range(0, 7).Where(i => _symbols[i] % 2 == 0).Concat(Enumerable.Range(0, 7).Where(i => _symbols[i] % 2 == 1).Reverse()).ToList();
+
+        _expectedActions = _slotOrder.Select<int, Func<float, float, bool>>((i, ix) =>
+           {
+               switch(_symbols[i])
+               {
+                   case 0:
+                   case 1:
+                       return (h, r) => (int)h == (int)r && (int)h % 10 == i + 1;
+                   case 2:
+                   case 3:
+                       return (h, r) =>  (int)h == (int)r && (int)h % 10 == ix;
+                   case 4:
+                   case 5:
+                       return (h, r) => Mathf.Abs((int)h - (int)r) == 1;
+                   case 6:
+                   case 7:
+                       return (h, r) => Mathf.Abs((int)h - (int)r) == 2;
+                   case 8:
+                   case 9:
+                       return (h, r) => (int)h == (int)r && ((int)h % 60) / 10 == (int)h % 10;
+                   case 10:
+                   case 11:
+                       return (h, r) => (int)h == (int)r && IsPrime((int)h % 60);
+               }
+               throw new ArgumentOutOfRangeException("Bad instruction index " + i);
+           }).ToList();
     }
 
-    private void HandlePressUp()
+    private bool IsPrime(int x)
     {
-        Debug.LogFormat("[Mystery Widget #{0}] Released on: {1}.", id, (int)Math.Floor(Info.GetTime()));
-        if(Ready && (pressedOn == (int)Math.Floor(Info.GetTime()) + 3 || pressedOn == (int)Math.Floor(Info.GetTime()) - 3))
-        {
-            Debug.LogFormat("[Mystery Widget #{0}] Correct! Solve.", id);
-            isSolved = true;
-            ActiveModule.HandlePass();
-            StartCoroutine(UnCover());
-            Ready = false;
-        }
-        else if(current != null && (pressedOn == (int)Math.Floor(Info.GetTime()) + 1 || pressedOn == (int)Math.Floor(Info.GetTime()) - 1))
-        {
-            Debug.LogFormat("[Mystery Widget #{0}] Failswitch! Taking off time.", id);
-            TimeRemaining.FromModule(ActiveModule, Info.GetTime() * 0.8f);
-            Displayed = false;
-            valid.Remove(current);
-        }
-        else { Debug.LogFormat("[Mystery Widget #{0}] Wrong! Strike.", id); ActiveModule.HandleStrike(); }
-    }
-
-    private void GenerateIgnored()
-    {
-        //NAME; SN; IND; BAT; BAT; PRT; PRT; ANY
-        Module m = new Module("", "", "", "", "", "", "", "");
-        m.Generate();
-        Regex yes = new Regex(@"Yes", RegexOptions.IgnoreCase);
-        foreach (Module mod in m.ModuleList)
-        {
-            if(yes.IsMatch(mod.p1)) { _info.IgnoredSN.Add(mod.name); }
-            if(yes.IsMatch(mod.p2) || yes.IsMatch(mod.p3) || yes.IsMatch(mod.p4) || yes.IsMatch(mod.p5) || yes.IsMatch(mod.p6)) { _info.IgnoredOther.Add(mod.name); }
-            _info.KnownModules.Add(mod.name);
-        }
-    }
-
-    private string[] GetIgnored()
-    {
-        return BossManager.GetIgnoredModules("Mystery Widget", new string[] { "Mystery Widget", "Cookie Jars", "Divided Squares", "Encrypted Hangman", "Encryption Bingo", "Four-Card Monte", "Hogwarts", "The Heart", "The Swan", "Button Messer", "Random Access Memory", "Turn The Keys", "Tech Support", "+FullBoss", "+SemiBoss" });
-    }
-
-    private bool GenerateDisplay()
-    {
-        Displayed = true;
-        if (valid.Count > 0)
-        {
-            Debug.LogFormat("[Mystery Widget #{0}] Next display is: {1}.", id, current);
-            current = valid.PickRandom();
-            valid.Remove(current);
-            DisplayMesh.text = current;
-            if (keyModule == null)
-                keyModule = current;
-            return false;
-        }
-        current = null;
-        return true;
-    }
-
-    void Update()
-    {
-        if (_awake)
-        {
-            if (!Displayed)
-            {
-                if (GenerateDisplay())
-                {
-                    Ready = true;
-                    DisplayMesh.text = "Ready to solve...";
-                    Debug.LogFormat("[Mystery Widget #{0}] All stages done! Ready to solve.", id, current);
-                    StartCoroutine(ReadyFlash());
-                }
-            }
-            else
-            {
-                if (Info.GetSolvedModuleNames().Count > solvedModules.Count)
-                {
-                    List<string> x = Info.GetSolvedModuleNames();
-                    foreach (string solved in solvedModules)
-                    {
-                        x.Remove(solved);
-                    }
-                    foreach (string a in x)
-                    {
-                        if (a == current)
-                        {
-                            Displayed = false;
-                            Debug.LogFormat("[Mystery Widget #{0}] {1} solved! Moving on...", id, current);
-                        }
-                        if (valid.Contains(a)) { valid.Remove(a); }
-                        solvedModules.Add(a);
-                    }
-                }
-            }
-        }
+        return new List<int>() { 2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59 }.Contains(x);
     }
 
     private IEnumerator UnCover()
     {
-        for (int i = 0; i < 10; i++)
+        for(int i = 0; i < 10; i++)
         {
             Cover.transform.localScale -= new Vector3(0.1f, 0.1f, 0.1f);
             yield return new WaitForSeconds(0.05f);
@@ -353,54 +202,133 @@ public class WidgetMagic : MonoBehaviour {
         Destroy(Cover);
     }
 
-    private IEnumerator ReadyFlash()
+    string TwitchHelpMessage = "Use \"!{0} at 25 hold 2\" to hold the button when the timer displays 25 seconds across 2 timer ticks. Either half is optional. A one digit number will be treated as only the last digit of the timer, use \"0#\" for the whole timer.";
+    bool ZenModeActive;
+
+    IEnumerator TwitchHandleForcedSolve()
     {
-        while (Ready)
+        while(_expectedActions.Count > 0)
         {
-            DisplayMesh.gameObject.SetActive(false);
-            yield return new WaitForSeconds(0.5f);
-            DisplayMesh.gameObject.SetActive(true);
-            yield return new WaitForSeconds(0.5f);
+            IEnumerator cmd = null;
+            switch(_symbols[_slotOrder[0]])
+            {
+                case 0:
+                case 1:
+                    cmd = ProcessTwitchCommand("at " + (_slotOrder[0] + 1));
+                    break;
+                case 2:
+                case 3:
+                    cmd = ProcessTwitchCommand("at " + (7 - _expectedActions.Count));
+                    break;
+                case 4:
+                case 5:
+                    cmd = ProcessTwitchCommand("hold 1");
+                    break;
+                case 6:
+                case 7:
+                    cmd = ProcessTwitchCommand("hold 2");
+                    break;
+                case 8:
+                case 9:
+                    float target = Time.time;
+                    int realTarget = (int)target;
+
+                    if(target % 1f < .2f && target % 1 > 0.8f)
+                        realTarget -= ZenModeActive ? -1 : 1;
+
+                    while((realTarget % 60) / 10 != realTarget % 10)
+                        realTarget -= ZenModeActive ? -1 : 1;
+
+                    realTarget %= 60;
+
+                    if(realTarget < 0)
+                        goto error;
+
+                    cmd = ProcessTwitchCommand("at " + (realTarget < 10 ? "0" : "") + realTarget);
+                    break;
+                case 10:
+                case 11:
+                    target = Time.time;
+                    realTarget = (int)target;
+
+                    if(target % 1f < .2f && target % 1 > 0.8f)
+                        realTarget -= ZenModeActive ? -1 : 1;
+
+                    while(!IsPrime(realTarget % 60))
+                        realTarget -= ZenModeActive ? -1 : 1;
+
+                    realTarget %= 60;
+
+                    if(realTarget < 0)
+                        goto error;
+
+                    cmd = ProcessTwitchCommand("at " + (realTarget < 10 ? "0" : "") + realTarget);
+                    break;
+            }
+
+            while(cmd.MoveNext())
+            {
+                if(cmd.Current is string)
+                    yield return true;
+                else
+                    yield return cmd.Current;
+            }
+            yield return true;
         }
-        DisplayMesh.text = "Congrats!";
+
+        while(!_isSolved)
+            yield return true;
+
+        yield break;
+
+        error:
+        Debug.LogFormat("[Mystery Widget #{0}] Error while autosolving!", id);
+        StartCoroutine(UnCover());
+        ActiveModule.HandlePass();
+        _isSolved = true;
     }
 
-    //TP handling
-    void TwitchHandleForcedSolve()
-    {
-        if (isSolved) return;
-        isSolved = true;
-        DisplayMesh.text = "Congrats!";
-        ActiveModule.HandlePass();
-        Ready = false;
-        StartCoroutine(UnCover());
-        Displayed = true;
-        valid = new List<string>();
-        current = null;
-        Reset();
-    }
-    bool TwitchShouldCancelCommand;
-    string TwitchHelpMessage = "Use \"!{0} hold 3\" to hold across three timer ticks.";
     IEnumerator ProcessTwitchCommand(string command)
     {
-        command = command.ToLowerInvariant().Trim();
-        Regex rx = new Regex(@"^hold\s+\d+$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-        if (!rx.IsMatch(command)) yield break;
-        Regex rxd = new Regex(@"\d+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-        int userInput = int.Parse(rxd.Match(command).Value);
-
-        Button.OnInteract();
-        var time = (int)Info.GetTime();
-        while (time - userInput != (int)Info.GetTime() && time + userInput != (int)Info.GetTime())
+        Regex r = new Regex(@"^((at\s+[0-5]?\d(\s+hold\s+\d)?)|(hold\s+\d(\s+at\s+[0-5]?\d)?))$", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+        if(r.IsMatch(command.Trim()))
         {
-            if (TwitchShouldCancelCommand)
+            int target = -1;
+            bool fuzzy = false;
+            int duration = 0;
+
+            string[] parts = command.Trim().ToLowerInvariant().Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            for(int i = 0; i < parts.Length; i += 2)
             {
-                Button.OnInteractEnded();
-                yield return "cancelled";
+                switch(parts[i])
+                {
+                    case "at":
+                        if(parts[i + 1].Length == 1)
+                            fuzzy = true;
+                        if(!int.TryParse(parts[i + 1], out target))
+                            yield break;
+                        break;
+                    case "hold":
+                        if(!int.TryParse(parts[i + 1], out duration))
+                            yield break;
+                        break;
+                    default:
+                        yield break;
+                }
             }
-            yield return new WaitForSeconds(0.1f);
+
+            yield return null;
+
+            while(target != -1 && (fuzzy ? (Info.GetTime() % 10 < target + 0.2f || Info.GetTime() % 10 > target + 0.8f) : (Info.GetTime() % 60 < target + 0.2f || Info.GetTime() % 60 > target + 0.8f)))
+                yield return "trycancel The button was not pressed due to a request to cancel.";
+            float h = Info.GetTime();
+            Button.OnInteract();
+            while(Mathf.Abs((int)h - (int)Info.GetTime()) < duration)
+                yield return null;
+            Button.OnInteractEnded();
+
+            if(_expectedActions.Count == 0)
+                yield return "solve";
         }
-        Button.OnInteractEnded();
-        yield return null;
     }
 }
