@@ -12,11 +12,9 @@ MonoBehaviour:
   m_Name: ModConfig
   m_EditorClassIdentifier: 
   id: widgetmodule
-  title: Mystery Widget [BETA]
+  title: Mystery Widget
   author: BakersDozenBagels
-  description: "What will it be?\r\n\r\nID: widgetModule\r\nManual: Included in workshop
-    item\r\n\r\nNote: Be careful with this for the moment, as it is in beta. Expect
-    bugs!\r\nIf you find one, please let me know on Discord."
-  version: 0.1
+  description: "What will it be?\r\n\r\nID: widgetModule\r"
+  version: 1.0
   outputFolder: build
   previewImage: {fileID: 2800000, guid: e7056529180fc5343ba3528fb9374bda, type: 3}
