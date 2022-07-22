@@ -116,10 +116,10 @@ public class WidgetMagic : MonoBehaviour
     {
         if(_info.toBeGenerated)
         {
-            List<Component> possibleEdgework = ActiveModule.transform.root.GetComponentsInChildren<Component>().Where(x => x.GetType().Name == "Transform" || x.GetType().Name == "KMWidget").ToList();
+            List<Component> possibleEdgework = transform.root.GetComponentsInChildren<Component>().Where(x => x != null && (x.GetType().Name == "Transform" || x.GetType().Name == "KMWidget")).ToList();
             Regex rx = new Regex(@"SerialNumber\(Clone\)|BatteryWidget\(Clone\)|IndicatorWidget\(Clone\)|PortWidget\(Clone\)", RegexOptions.IgnoreCase);
             Regex seed = new Regex(@"seed", RegexOptions.IgnoreCase);
-            _info.edgework = possibleEdgework.Where(x => (rx.IsMatch(x.name) || x.GetType().Name == "KMWidget") && !seed.IsMatch(x.name)).ToList();
+            _info.edgework = possibleEdgework.Where(y => y != null && (rx.IsMatch(y.name) || y.GetType().Name == "KMWidget") && !seed.IsMatch(y.name)).ToList();
             _info.toBeGenerated = false;
         }
         if(_info.edgework.Count == 0)
@@ -169,7 +169,7 @@ public class WidgetMagic : MonoBehaviour
                        return (h, r) => (int)h == (int)r && (int)h % 10 == i + 1;
                    case 2:
                    case 3:
-                       return (h, r) =>  (int)h == (int)r && (int)h % 10 == ix;
+                       return (h, r) => (int)h == (int)r && (int)h % 10 == ix;
                    case 4:
                    case 5:
                        return (h, r) => Mathf.Abs((int)h - (int)r) == 1;
